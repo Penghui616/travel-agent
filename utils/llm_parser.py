@@ -7,13 +7,10 @@ from typing import Any, Dict
 from dotenv import load_dotenv
 from zhipuai import ZhipuAI
 
-from utils.config import get_setting
+from utils.config import get_required_setting, get_setting
 from utils.token_usage import record_token_usage
 
 load_dotenv()
-
-API_KEY = get_setting("ZHIPU_API_KEY")
-MODEL_NAME = get_setting("ZHIPU_MODEL", "glm-4-flash")
 
 SYSTEM_PROMPT = """
 你是一个旅行需求解析助手。
@@ -37,9 +34,11 @@ AFTERNOON_KEYWORDS = ["下午出门", "下午开始", "中午后出门", "晚点
 
 
 def get_client() -> ZhipuAI:
-    if not API_KEY:
-        raise ValueError("请先在 .env 中配置 ZHIPU_API_KEY")
-    return ZhipuAI(api_key=API_KEY)
+    return ZhipuAI(api_key=get_required_setting("ZHIPU_API_KEY"))
+
+
+def get_model_name() -> str:
+    return get_setting("ZHIPU_MODEL", "glm-4-flash") or "glm-4-flash"
 
 
 def _append_special_requirement(original: str, addition: str) -> str:
@@ -87,15 +86,16 @@ def extract_json_from_text(text: str) -> Dict[str, Any]:
 
 @lru_cache(maxsize=64)
 def _parse_request_cached(user_input: str) -> Dict[str, Any]:
+    model_name = get_model_name()
     response = get_client().chat.completions.create(
-        model=MODEL_NAME,
+        model=model_name,
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": user_input},
         ],
         temperature=0,
     )
-    record_token_usage("parse_request", response, MODEL_NAME)
+    record_token_usage("parse_request", response, model_name)
 
     content = response.choices[0].message.content
     return extract_json_from_text(content)

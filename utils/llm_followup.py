@@ -7,14 +7,10 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from zhipuai import ZhipuAI
 
-from utils.config import get_setting
+from utils.config import get_required_setting, get_setting
 from utils.token_usage import record_token_usage
 
 load_dotenv()
-
-API_KEY = get_setting("ZHIPU_API_KEY")
-MODEL_NAME = get_setting("ZHIPU_MODEL", "glm-4-flash")
-
 
 UPDATE_PROMPT = """
 你是一个旅游需求更新助手。
@@ -94,9 +90,11 @@ DAY_FOCUS_KEYWORDS = {
 
 
 def get_client() -> ZhipuAI:
-    if not API_KEY:
-        raise ValueError("请先在 .env 中配置 ZHIPU_API_KEY")
-    return ZhipuAI(api_key=API_KEY)
+    return ZhipuAI(api_key=get_required_setting("ZHIPU_API_KEY"))
+
+
+def get_model_name() -> str:
+    return get_setting("ZHIPU_MODEL", "glm-4-flash") or "glm-4-flash"
 
 
 def extract_json_from_text(text: str) -> Dict[str, Any]:
@@ -495,7 +493,7 @@ def update_parsed_request_with_llm(
     reference_days = int(current_request.get("days", 0) or 0)
     effective_user_message = (rewritten_user_message or user_message).strip()
 
-    if API_KEY:
+    if get_setting("ZHIPU_API_KEY"):
         payload = {
             "current_request": current_request,
             "current_itinerary": current_itinerary or {},
@@ -504,15 +502,16 @@ def update_parsed_request_with_llm(
         }
 
         try:
+            model_name = get_model_name()
             response = get_client().chat.completions.create(
-                model=MODEL_NAME,
+                model=model_name,
                 temperature=0,
                 messages=[
                     {"role": "system", "content": UPDATE_PROMPT},
                     {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
                 ],
             )
-            record_token_usage("update_request", response, MODEL_NAME)
+            record_token_usage("update_request", response, model_name)
             content = response.choices[0].message.content
             llm_request = extract_json_from_text(content)
             merged_request.update(llm_request)
@@ -547,14 +546,15 @@ def answer_followup_with_llm(
         "user_message": effective_user_message,
     }
 
+    model_name = get_model_name()
     response = get_client().chat.completions.create(
-        model=MODEL_NAME,
+        model=model_name,
         temperature=0.5,
         messages=[
             {"role": "system", "content": QA_PROMPT},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ],
     )
-    record_token_usage("followup_answer", response, MODEL_NAME)
+    record_token_usage("followup_answer", response, model_name)
 
     return response.choices[0].message.content.strip()

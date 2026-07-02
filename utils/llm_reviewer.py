@@ -6,14 +6,12 @@ from typing import Any, Dict, List
 from dotenv import load_dotenv
 from zhipuai import ZhipuAI
 
-from utils.config import get_setting
+from utils.config import get_required_setting, get_setting
 from utils.llm_itinerary import extract_json_from_text, postprocess_itinerary
 from utils.token_usage import record_token_usage
 
 load_dotenv()
 
-API_KEY = get_setting("ZHIPU_API_KEY")
-MODEL_NAME = get_setting("ZHIPU_MODEL", "glm-4-flash")
 MAX_REPAIR_ATTEMPTS = 2
 
 
@@ -40,9 +38,11 @@ REVIEW_REPAIR_PROMPT = """
 
 
 def get_client() -> ZhipuAI:
-    if not API_KEY:
-        raise ValueError("请先在 .env 中配置 ZHIPU_API_KEY")
-    return ZhipuAI(api_key=API_KEY)
+    return ZhipuAI(api_key=get_required_setting("ZHIPU_API_KEY"))
+
+
+def get_model_name() -> str:
+    return get_setting("ZHIPU_MODEL", "glm-4-flash") or "glm-4-flash"
 
 
 def _normalize_name(name: str) -> str:
@@ -196,15 +196,16 @@ def repair_itinerary_with_llm(
         "validation_issues": issues,
     }
 
+    model_name = get_model_name()
     response = get_client().chat.completions.create(
-        model=MODEL_NAME,
+        model=model_name,
         temperature=0.2,
         messages=[
             {"role": "system", "content": REVIEW_REPAIR_PROMPT},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
         ],
     )
-    record_token_usage("reviewer_repair", response, MODEL_NAME)
+    record_token_usage("reviewer_repair", response, model_name)
 
     content = response.choices[0].message.content
     return extract_json_from_text(content)

@@ -7,11 +7,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 from dotenv import load_dotenv
 
-from utils.config import get_setting
+from utils.config import get_required_setting, get_setting
 
 load_dotenv()
-
-AMAP_KEY = get_setting("AMAP_KEY")
 
 AMAP_GEO_URL = "https://restapi.amap.com/v3/geocode/geo"
 AMAP_WEATHER_URL = "https://restapi.amap.com/v3/weather/weatherInfo"
@@ -27,11 +25,8 @@ _SESSION.headers.update({"User-Agent": "travel-agent/1.0"})
 
 
 def _request(url: str, params: Dict[str, Any]) -> Dict[str, Any]:
-    if not AMAP_KEY:
-        raise ValueError("请先在 .env 中配置 AMAP_KEY")
-
     request_params = dict(params)
-    request_params["key"] = AMAP_KEY
+    request_params["key"] = get_required_setting("AMAP_KEY")
     request_params["output"] = "JSON"
 
     resp = _SESSION.get(url, params=request_params, timeout=10)

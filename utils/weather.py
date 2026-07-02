@@ -1,9 +1,6 @@
-import os
 import requests
 
-from utils.config import get_setting
-
-WEATHER_API_KEY = get_setting("WEATHER_API_KEY")
+from utils.config import get_required_setting, get_setting
 
 
 def generate_weather_advice(forecast: list):
@@ -37,13 +34,11 @@ def get_weather(city: str, start_date: str = "", days: int = 1):
     city: 城市名或 adcode，比如 '重庆' 或 '500000'
     days: 计划展示几天，实际高德返回格式以接口为准
     """
-    if not WEATHER_API_KEY:
-        raise ValueError("没有检测到 WEATHER_API_KEY，请先配置天气 API Key")
-
     url = "https://restapi.amap.com/v3/weather/weatherInfo"
+    api_key = get_setting("WEATHER_API_KEY") or get_required_setting("AMAP_KEY")
 
     params = {
-        "key": WEATHER_API_KEY,
+        "key": api_key,
         "city": city,
         "extensions": "all",   # 预报天气；如果想查实时天气改成 base
         "output": "JSON",

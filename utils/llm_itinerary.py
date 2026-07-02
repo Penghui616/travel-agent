@@ -7,13 +7,11 @@ from typing import Any, Dict, List, Optional
 from dotenv import load_dotenv
 from zhipuai import ZhipuAI
 
-from utils.config import get_setting
+from utils.config import get_required_setting, get_setting
 from utils.token_usage import record_token_usage
 
 load_dotenv()
 
-API_KEY = get_setting("ZHIPU_API_KEY")
-MODEL_NAME = get_setting("ZHIPU_MODEL", "glm-4-flash")
 MAX_CONTEXT_ATTRACTIONS = 18
 MAX_CONTEXT_RESTAURANTS = 12
 MAX_CONTEXT_HOTELS = 6
@@ -188,9 +186,11 @@ DAY_FOCUS_CATEGORY_PLAN = {
 
 
 def get_client() -> ZhipuAI:
-    if not API_KEY:
-        raise ValueError("请先在 .env 中配置 ZHIPU_API_KEY")
-    return ZhipuAI(api_key=API_KEY)
+    return ZhipuAI(api_key=get_required_setting("ZHIPU_API_KEY"))
+
+
+def get_model_name() -> str:
+    return get_setting("ZHIPU_MODEL", "glm-4-flash") or "glm-4-flash"
 
 
 def _strip_code_fences(text: str) -> str:
@@ -244,15 +244,16 @@ def _sanitize_json_text(text: str) -> str:
 
 
 def _repair_json_with_llm(text: str) -> str:
+    model_name = get_model_name()
     response = get_client().chat.completions.create(
-        model=MODEL_NAME,
+        model=model_name,
         temperature=0,
         messages=[
             {"role": "system", "content": JSON_REPAIR_PROMPT},
             {"role": "user", "content": text},
         ],
     )
-    record_token_usage("json_repair", response, MODEL_NAME)
+    record_token_usage("json_repair", response, model_name)
     return response.choices[0].message.content.strip()
 
 
@@ -279,7 +280,7 @@ def extract_json_from_text(text: str, allow_llm_repair: bool = True) -> Dict[str
         except json.JSONDecodeError as exc:
             last_error = exc
 
-    if allow_llm_repair and API_KEY:
+    if allow_llm_repair and get_setting("ZHIPU_API_KEY"):
         repaired = _repair_json_with_llm(candidate or cleaned)
         return extract_json_from_text(repaired, allow_llm_repair=False)
 
@@ -1265,8 +1266,9 @@ def generate_itinerary_with_llm(
         "day_district_plan": day_district_plan,
     }
 
+    model_name = get_model_name()
     response = get_client().chat.completions.create(
-        model=MODEL_NAME,
+        model=model_name,
         temperature=0.2,
         messages=[
             {"role": "system", "content": ITINERARY_PROMPT},
@@ -1276,7 +1278,7 @@ def generate_itinerary_with_llm(
             },
         ],
     )
-    record_token_usage("itinerary_generation", response, MODEL_NAME)
+    record_token_usage("itinerary_generation", response, model_name)
 
     content = response.choices[0].message.content
     itinerary = extract_json_from_text(content)
