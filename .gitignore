@@ -1,0 +1,17 @@
+# Secrets
+.env
+*.env
+.streamlit/secrets.toml
+
+# Python cache and virtual environments
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
