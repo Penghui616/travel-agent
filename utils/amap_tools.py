@@ -7,9 +7,11 @@ from typing import Any, Dict, List, Optional, Tuple
 import requests
 from dotenv import load_dotenv
 
+from utils.config import get_setting
+
 load_dotenv()
 
-AMAP_KEY = os.getenv("AMAP_KEY")
+AMAP_KEY = get_setting("AMAP_KEY")
 
 AMAP_GEO_URL = "https://restapi.amap.com/v3/geocode/geo"
 AMAP_WEATHER_URL = "https://restapi.amap.com/v3/weather/weatherInfo"
@@ -17,8 +19,8 @@ AMAP_PLACE_URL = "https://restapi.amap.com/v3/place/text"
 AMAP_WALKING_URL = "https://restapi.amap.com/v3/direction/walking"
 AMAP_DRIVING_URL = "https://restapi.amap.com/v3/direction/driving"
 
-MAX_DISTANCE_ROUTES = max(0, int(os.getenv("TRAVEL_AGENT_MAX_DISTANCE_ROUTES", "2")))
-MAX_ROUTE_WORKERS = max(1, int(os.getenv("TRAVEL_AGENT_MAX_ROUTE_WORKERS", "2")))
+MAX_DISTANCE_ROUTES = max(0, int(get_setting("TRAVEL_AGENT_MAX_DISTANCE_ROUTES", "2")))
+MAX_ROUTE_WORKERS = max(1, int(get_setting("TRAVEL_AGENT_MAX_ROUTE_WORKERS", "2")))
 
 _SESSION = requests.Session()
 _SESSION.headers.update({"User-Agent": "travel-agent/1.0"})

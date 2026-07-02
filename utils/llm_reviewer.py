@@ -6,13 +6,14 @@ from typing import Any, Dict, List
 from dotenv import load_dotenv
 from zhipuai import ZhipuAI
 
+from utils.config import get_setting
 from utils.llm_itinerary import extract_json_from_text, postprocess_itinerary
 from utils.token_usage import record_token_usage
 
 load_dotenv()
 
-API_KEY = os.getenv("ZHIPU_API_KEY")
-MODEL_NAME = os.getenv("ZHIPU_MODEL", "glm-4-flash")
+API_KEY = get_setting("ZHIPU_API_KEY")
+MODEL_NAME = get_setting("ZHIPU_MODEL", "glm-4-flash")
 MAX_REPAIR_ATTEMPTS = 2
 
 

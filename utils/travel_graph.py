@@ -9,10 +9,11 @@ from utils.amap_tools import (
     restaurant_tool,
     weather_tool,
 )
+from utils.config import get_setting
 
 
-MAX_TOOL_WORKERS = max(2, int(os.getenv("TRAVEL_AGENT_MAX_TOOL_WORKERS", "4")))
-ENABLE_DISTANCE_TOOL = os.getenv("TRAVEL_AGENT_ENABLE_DISTANCE", "1").lower() not in {
+MAX_TOOL_WORKERS = max(2, int(get_setting("TRAVEL_AGENT_MAX_TOOL_WORKERS", "4")))
+ENABLE_DISTANCE_TOOL = get_setting("TRAVEL_AGENT_ENABLE_DISTANCE", "1").lower() not in {
     "0",
     "false",
     "no",

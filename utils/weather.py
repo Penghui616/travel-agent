@@ -1,8 +1,9 @@
 import os
 import requests
 
+from utils.config import get_setting
 
-WEATHER_API_KEY = os.getenv("WEATHER_API_KEY")
+WEATHER_API_KEY = get_setting("WEATHER_API_KEY")
 
 
 def generate_weather_advice(forecast: list):
