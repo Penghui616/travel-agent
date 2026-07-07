@@ -5,20 +5,17 @@ from typing import Any, Dict, Iterator
 import streamlit as st
 
 from utils.llm_followup import (
-    answer_followup_with_llm,
     should_update_trip,
-    update_parsed_request_with_llm,
 )
-from utils.llm_itinerary import generate_itinerary_with_llm
-from utils.llm_parser import parse_travel_request_with_llm
-from utils.llm_planner import generate_plan
-from utils.llm_query_rewriter import rewrite_followup_query, rewrite_initial_query
+from utils.langgraph_workflow import (
+    run_followup_qa_workflow,
+    run_trip_generation_workflow,
+)
 from utils.token_usage import (
     get_token_usage_records,
     reset_token_usage,
     summarize_token_usage,
 )
-from utils.travel_graph import run_travel_agent_tools
 
 
 TIMING_STAGE_LABELS = {
@@ -28,6 +25,7 @@ TIMING_STAGE_LABELS = {
     "update_request": "更新需求 LLM",
     "deterministic_plan": "本地任务计划",
     "tools": "工具调用",
+    "rag_retrieval": "RAG 知识检索",
     "itinerary_llm": "行程生成 LLM",
     "followup_answer": "追问回答 LLM",
 }
@@ -49,8 +47,8 @@ PIPELINE_PROGRESS_TITLES = {
 }
 
 PIPELINE_TOTAL_STEPS = {
-    "initial_trip": 5,
-    "update_trip": 5,
+    "initial_trip": 6,
+    "update_trip": 6,
     "followup_qa": 2,
 }
 
@@ -355,50 +353,35 @@ def run_trip_pipeline(user_message: str, is_update: bool) -> None:
     success = False
 
     try:
-        if is_update and st.session_state["parsed_request"] is not None:
-            with timed_stage(timings, "followup_rewrite", progress):
-                rewritten_message = rewrite_followup_query(
-                    user_message=user_message,
-                    parsed_request=st.session_state["parsed_request"],
-                    current_itinerary=st.session_state["final_itinerary"],
-                    conversation_history=history,
-                )
-            with timed_stage(timings, "update_request", progress):
-                parsed_request = update_parsed_request_with_llm(
-                    current_request=st.session_state["parsed_request"],
-                    user_message=user_message,
-                    conversation_history=history,
-                    current_itinerary=st.session_state["final_itinerary"],
-                    rewritten_user_message=rewritten_message,
-                )
-            add_query_rewrite_record("followup_update", user_message, rewritten_message)
-        else:
-            with timed_stage(timings, "initial_rewrite", progress):
-                rewritten_message = rewrite_initial_query(user_message)
-            with timed_stage(timings, "parse_request", progress):
-                parsed_request = parse_travel_request_with_llm(
-                    rewritten_message,
-                    original_user_input=user_message,
-                )
-            if not st.session_state["raw_user_input"]:
-                st.session_state["raw_user_input"] = user_message
-                st.session_state["rewritten_user_input"] = rewritten_message
-            add_query_rewrite_record("initial_parse", user_message, rewritten_message)
+        def stage_runner(stage: str, fn):
+            with timed_stage(timings, stage, progress):
+                return fn()
 
-        with timed_stage(timings, "deterministic_plan", progress):
-            execution_plan = generate_plan(parsed_request)
-        with timed_stage(timings, "tools", progress):
-            tool_results = run_travel_agent_tools(
-                parsed_request,
-                previous_request=st.session_state["parsed_request"],
-                previous_tool_results=st.session_state["tool_results"],
-            )
-        with timed_stage(timings, "itinerary_llm", progress):
-            final_itinerary = generate_itinerary_with_llm(
-                parsed_request=parsed_request,
-                execution_plan=execution_plan,
-                tool_results=tool_results,
-            )
+        workflow_result = run_trip_generation_workflow(
+            user_message=user_message,
+            is_update=is_update,
+            current_parsed_request=st.session_state["parsed_request"],
+            current_itinerary=st.session_state["final_itinerary"],
+            previous_tool_results=st.session_state["tool_results"],
+            conversation_history=history,
+            stage_runner=stage_runner,
+        )
+
+        parsed_request = workflow_result["parsed_request"]
+        execution_plan = workflow_result["execution_plan"]
+        tool_results = workflow_result["tool_results"]
+        final_itinerary = workflow_result["final_itinerary"]
+        rewritten_message = workflow_result.get("rewritten_message", user_message)
+
+        if not is_update and not st.session_state["raw_user_input"]:
+            st.session_state["raw_user_input"] = user_message
+            st.session_state["rewritten_user_input"] = rewritten_message
+
+        add_query_rewrite_record(
+            workflow_result.get("rewrite_record_stage", "initial_parse"),
+            user_message,
+            rewritten_message,
+        )
 
         st.session_state["parsed_request"] = parsed_request
         st.session_state["execution_plan"] = execution_plan
@@ -432,7 +415,6 @@ def handle_user_message(user_message: str) -> None:
     )
 
     has_existing_trip = st.session_state["parsed_request"] is not None
-
     if not has_existing_trip:
         with st.spinner("我在理解你的需求并生成完整行程..."):
             run_trip_pipeline(clean_message, is_update=False)
@@ -449,29 +431,23 @@ def handle_user_message(user_message: str) -> None:
     progress = ProgressReporter("followup_qa")
     success = False
     try:
-        with timed_stage(timings, "followup_rewrite", progress):
-            rewritten_message = rewrite_followup_query(
-                user_message=clean_message,
-                parsed_request=st.session_state["parsed_request"],
-                current_itinerary=st.session_state["final_itinerary"],
-                conversation_history=st.session_state["conversation_history"],
-            )
+        def stage_runner(stage: str, fn):
+            with timed_stage(timings, stage, progress):
+                return fn()
+
+        qa_result = run_followup_qa_workflow(
+            user_message=clean_message,
+            parsed_request=st.session_state["parsed_request"] or {},
+            execution_plan=st.session_state["execution_plan"] or {},
+            tool_results=st.session_state["tool_results"] or {},
+            final_itinerary=st.session_state["final_itinerary"] or {},
+            conversation_history=st.session_state["conversation_history"],
+            stage_runner=stage_runner,
+        )
+        rewritten_message = qa_result.get("rewritten_message", clean_message)
         add_query_rewrite_record("followup_qa", clean_message, rewritten_message)
-
-        with st.spinner("我在结合当前方案回答你..."):
-            with timed_stage(timings, "followup_answer", progress):
-                answer = answer_followup_with_llm(
-                    parsed_request=st.session_state["parsed_request"],
-                    execution_plan=st.session_state["execution_plan"] or {},
-                    tool_results=st.session_state["tool_results"] or {},
-                    final_itinerary=st.session_state["final_itinerary"] or {},
-                    conversation_history=st.session_state["conversation_history"],
-                    user_message=clean_message,
-                    rewritten_user_message=rewritten_message,
-                )
-
         st.session_state["conversation_history"].append(
-            {"role": "assistant", "content": answer}
+            {"role": "assistant", "content": qa_result["answer"]}
         )
         success = True
     finally:

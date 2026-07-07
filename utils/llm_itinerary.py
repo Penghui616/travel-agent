@@ -5,9 +5,9 @@ from collections import Counter
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-from zhipuai import ZhipuAI
 
-from utils.config import get_required_setting, get_setting
+from utils.config import get_setting
+from utils.langchain_llm import LangChainChatClient, get_langchain_chat_client
 from utils.token_usage import record_token_usage
 
 load_dotenv()
@@ -51,6 +51,7 @@ ITINERARY_PROMPT = """
 12. `theme` 和 `route_summary` 最好体现当天核心片区。
 13. 输出必须是合法 JSON，不要输出 markdown，不要输出解释。
 14. `summary`、`description`、`transport_to_next`、`day_tips` 都要简洁；每个 description 控制在一句话内。
+15. 如果输入中提供了 `rag_context`，请把它当作本地攻略知识参考，用来优化片区节奏、避坑提醒和主题安排；地点选择仍优先依据 `compact_tool_results` 中的真实候选。
 
 每个 day 的 items 示例：
 [
@@ -185,8 +186,8 @@ DAY_FOCUS_CATEGORY_PLAN = {
 }
 
 
-def get_client() -> ZhipuAI:
-    return ZhipuAI(api_key=get_required_setting("ZHIPU_API_KEY"))
+def get_client() -> LangChainChatClient:
+    return get_langchain_chat_client()
 
 
 def get_model_name() -> str:
@@ -1236,6 +1237,7 @@ def generate_itinerary_with_llm(
     parsed_request: Dict[str, Any],
     execution_plan: Dict[str, Any],
     tool_results: Dict[str, Any],
+    rag_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     day_district_plan = _build_day_district_plan(parsed_request, tool_results)
     compact_tool_results = _build_compact_tool_context(parsed_request, tool_results)
@@ -1264,6 +1266,7 @@ def generate_itinerary_with_llm(
         "candidate_pool": candidate_pool,
         "candidate_pool_by_district": compact_tool_results.get("candidate_pool_by_district", {}),
         "day_district_plan": day_district_plan,
+        "rag_context": rag_context or {},
     }
 
     model_name = get_model_name()

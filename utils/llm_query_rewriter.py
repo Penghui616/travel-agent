@@ -4,9 +4,9 @@ from functools import lru_cache
 from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
-from zhipuai import ZhipuAI
 
-from utils.config import get_required_setting, get_setting
+from utils.config import get_setting
+from utils.langchain_llm import LangChainChatClient, get_langchain_chat_client
 from utils.token_usage import record_token_usage
 
 load_dotenv()
@@ -25,8 +25,8 @@ FOLLOWUP_REWRITE_PROMPT = """
 """
 
 
-def get_client() -> ZhipuAI:
-    return ZhipuAI(api_key=get_required_setting("ZHIPU_API_KEY"))
+def get_client() -> LangChainChatClient:
+    return get_langchain_chat_client()
 
 
 def get_model_name() -> str:

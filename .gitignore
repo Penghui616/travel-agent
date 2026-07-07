@@ -10,6 +10,9 @@ __pycache__/
 venv/
 env/
 
+# Local RAG vector indexes
+data/vector_store/
+
 # OS/editor noise
 .DS_Store
 Thumbs.db
