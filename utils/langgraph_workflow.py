@@ -10,6 +10,7 @@ from utils.llm_planner import generate_plan
 from utils.llm_query_rewriter import rewrite_followup_query, rewrite_initial_query
 from utils.rag_retriever import retrieve_travel_knowledge
 from utils.travel_graph import run_travel_agent_tools
+from utils.user_memory import apply_memory_to_request
 
 
 StageRunner = Callable[[str, Callable[[], Any]], Any]
@@ -80,6 +81,7 @@ def _parse_initial(state: TripGenerationState) -> Dict[str, Any]:
             original_user_input=state["user_message"],
         ),
     )
+    parsed_request = apply_memory_to_request(parsed_request, user_message=state["user_message"])
     return {"parsed_request": parsed_request}
 
 
@@ -112,6 +114,7 @@ def _update_request(state: TripGenerationState) -> Dict[str, Any]:
             rewritten_user_message=state["rewritten_message"],
         ),
     )
+    parsed_request = apply_memory_to_request(parsed_request, user_message=state["user_message"])
     return {"parsed_request": parsed_request}
 
 

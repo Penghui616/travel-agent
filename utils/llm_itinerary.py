@@ -12,11 +12,21 @@ from utils.token_usage import record_token_usage
 
 load_dotenv()
 
-MAX_CONTEXT_ATTRACTIONS = 18
-MAX_CONTEXT_RESTAURANTS = 12
-MAX_CONTEXT_HOTELS = 6
-MAX_CONTEXT_DISTRICTS = 8
+MAX_CONTEXT_ATTRACTIONS = int(get_setting("TRAVEL_AGENT_MAX_CONTEXT_ATTRACTIONS", "20") or "20")
+MAX_CONTEXT_ATTRACTIONS_CAP = int(get_setting("TRAVEL_AGENT_MAX_CONTEXT_ATTRACTIONS_CAP", "40") or "40")
+MAX_CONTEXT_RESTAURANTS = int(get_setting("TRAVEL_AGENT_MAX_CONTEXT_RESTAURANTS", "10") or "10")
+MAX_CONTEXT_RESTAURANTS_CAP = int(get_setting("TRAVEL_AGENT_MAX_CONTEXT_RESTAURANTS_CAP", "24") or "24")
+MAX_CONTEXT_HOTELS = int(get_setting("TRAVEL_AGENT_MAX_CONTEXT_HOTELS", "4") or "4")
+MAX_CONTEXT_DISTRICTS = int(get_setting("TRAVEL_AGENT_MAX_CONTEXT_DISTRICTS", "5") or "5")
+MAX_RAG_CHUNKS = int(get_setting("TRAVEL_AGENT_MAX_RAG_CHUNKS", "2") or "2")
+MAX_RAG_CONTENT_CHARS = int(get_setting("TRAVEL_AGENT_MAX_RAG_CONTENT_CHARS", "320") or "320")
 MIN_SIGHTSEEING_ITEMS_PER_DAY = 4
+FAST_ITINERARY_ENABLED = str(get_setting("TRAVEL_AGENT_FAST_ITINERARY", "1") or "1").strip().lower() not in {
+    "0",
+    "false",
+    "no",
+    "off",
+}
 
 
 JSON_REPAIR_PROMPT = """
@@ -575,13 +585,14 @@ def _build_compact_tool_context(
     expected_days = max(int(parsed_request.get("days", 0) or 0), 1)
     pools = _extract_poi_pool(tool_results)
 
+    required_sightseeing_candidates = expected_days * MIN_SIGHTSEEING_ITEMS_PER_DAY + max(expected_days, 4)
     attraction_limit = min(
-        max(expected_days * 5, 12),
-        MAX_CONTEXT_ATTRACTIONS,
+        max(MAX_CONTEXT_ATTRACTIONS, required_sightseeing_candidates),
+        max(MAX_CONTEXT_ATTRACTIONS_CAP, MAX_CONTEXT_ATTRACTIONS),
     )
     restaurant_limit = min(
-        max(expected_days * 3, 8),
-        MAX_CONTEXT_RESTAURANTS,
+        max(MAX_CONTEXT_RESTAURANTS, expected_days * 2),
+        max(MAX_CONTEXT_RESTAURANTS_CAP, MAX_CONTEXT_RESTAURANTS),
     )
 
     return {
@@ -649,30 +660,42 @@ def _next_unused_poi(
     return None
 
 
-def _fallback_item_name(day_number: int, item_index: int, category: str) -> str:
+def _fallback_item_name(
+    day_number: int,
+    item_index: int,
+    category: str,
+    preferred_district: Optional[str] = None,
+) -> str:
     category = (category or "").strip()
+    district_label = f"第{day_number}天{preferred_district}" if preferred_district else f"第{day_number}天"
     if any(keyword in category for keyword in ["餐", "美食", "小吃", "咖啡"]):
-        return f"第{day_number}天特色用餐时段{item_index}"
+        return f"{district_label}特色小吃探索"
     if any(keyword in category for keyword in ["酒店", "住宿", "民宿"]):
-        return f"第{day_number}天住宿休整时段{item_index}"
+        return f"{district_label}住宿休整"
     if any(keyword in category for keyword in ["夜景", "夜游"]):
-        return f"第{day_number}天夜景漫步时段{item_index}"
+        return f"{district_label}夜景散步"
     if any(keyword in category for keyword in ["购物", "商圈"]):
-        return f"第{day_number}天商圈自由活动时段{item_index}"
-    return f"第{day_number}天城市漫步时段{item_index}"
+        return f"{district_label}商圈闲逛"
+    generic_names = ["城市地标漫步", "老街区探索", "滨江休闲散步", "街区文化体验"]
+    return f"{district_label}{generic_names[(item_index - 1) % len(generic_names)]}"
 
 
-def _fallback_description(day_number: int, category: str) -> str:
+def _fallback_description(
+    day_number: int,
+    category: str,
+    preferred_district: Optional[str] = None,
+) -> str:
     category = (category or "").strip()
+    district_label = preferred_district or "当天片区"
     if any(keyword in category for keyword in ["餐", "美食", "小吃", "咖啡"]):
         return f"作为第{day_number}天的就近用餐安排，避免重复打卡同一餐厅，也减少跨区折返。"
     if any(keyword in category for keyword in ["酒店", "住宿", "民宿"]):
         return f"作为第{day_number}天的休整时段，给行程留出弹性，避免节奏过赶。"
     if any(keyword in category for keyword in ["夜景", "夜游"]):
-        return f"作为第{day_number}天晚间放松活动，适合散步看夜景，不重复前面已经去过的地点。"
+        return f"安排在{district_label}晚间放松看夜景，避免重复前面已经去过的地点。"
     if any(keyword in category for keyword in ["购物", "商圈"]):
-        return f"作为第{day_number}天的弹性活动时段，可根据体力和兴趣自由安排。"
-    return f"作为第{day_number}天的补充活动，保证行程丰富但不重复景点。"
+        return f"安排在{district_label}补充逛街和休息时间，可根据体力灵活调整。"
+    return f"安排在{district_label}补充城市探索，保证行程丰富且不重复前面地点。"
 
 
 def _collect_used_names(itinerary: Dict[str, Any]) -> set[str]:
@@ -712,8 +735,8 @@ def _build_replacement_item(
         return updated
 
     updated = dict(item)
-    updated["name"] = _fallback_item_name(day_number, item_index, category)
-    updated["description"] = _fallback_description(day_number, category)
+    updated["name"] = _fallback_item_name(day_number, item_index, category, preferred_district)
+    updated["description"] = _fallback_description(day_number, category, preferred_district)
     if not updated.get("transport_to_next"):
         updated["transport_to_next"] = "根据当天实际位置灵活前往下一站"
     return updated
@@ -1233,12 +1256,181 @@ def ensure_itinerary_supporting_fields(
     return itinerary
 
 
+def _compact_rag_context(rag_context: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    if not isinstance(rag_context, dict):
+        return {}
+
+    compact_chunks = []
+    for chunk in (rag_context.get("chunks") or [])[:MAX_RAG_CHUNKS]:
+        content = str(chunk.get("content", "") or "").strip()
+        if len(content) > MAX_RAG_CONTENT_CHARS:
+            content = content[:MAX_RAG_CONTENT_CHARS].rstrip() + "..."
+        compact_chunks.append(
+            {
+                "source": chunk.get("source", ""),
+                "title": chunk.get("title", ""),
+                "content": content,
+                "score": chunk.get("score", 0),
+            }
+        )
+
+    return {
+        "retriever": rag_context.get("retriever", ""),
+        "query": rag_context.get("query", ""),
+        "chunks": compact_chunks,
+        "summary": "\n".join(
+            f"- [{chunk['source']}] {chunk['title']}: {chunk['content']}"
+            for chunk in compact_chunks
+        ),
+    }
+
+
+def _fast_theme_suffix(day_number: int, parsed_request: Dict[str, Any]) -> str:
+    preferences = [
+        str(item).strip()
+        for item in (parsed_request.get("preferences", []) or [])
+        if str(item).strip()
+    ]
+    if preferences:
+        preference = preferences[(day_number - 1) % len(preferences)]
+        theme_map = {
+            "夜景": "夜景漫游",
+            "历史文化": "历史文化线",
+            "博物馆": "文化展馆线",
+            "购物": "商圈休闲线",
+            "自然风景": "自然休闲线",
+            "美食": "美食街区线",
+            "拍照": "拍照打卡线",
+            "citywalk": "城市漫步线",
+        }
+        return theme_map.get(preference, f"{preference}主题线")
+
+    default_suffixes = [
+        "经典打卡线",
+        "城市漫步线",
+        "文化休闲线",
+        "滨江夜景线",
+        "轻松探索线",
+        "街区体验线",
+        "收尾慢游线",
+    ]
+    return default_suffixes[(day_number - 1) % len(default_suffixes)]
+
+
+def _fast_day_tip(
+    day_number: int,
+    preferred_district: str,
+    parsed_request: Dict[str, Any],
+) -> List[str]:
+    district_label = preferred_district or "当天片区"
+    tips = [f"第{day_number}天尽量围绕{district_label}游玩，减少跨区折返。"]
+    if _prefers_afternoon_start(parsed_request):
+        tips.append("已按下午出门节奏安排，上午可以休息或自由活动。")
+    else:
+        tips.append("当天覆盖上午、下午和晚上，节奏偏充实，可按体力删减。")
+    return tips
+
+
+def _fast_important_tips(
+    parsed_request: Dict[str, Any],
+    rag_context: Optional[Dict[str, Any]],
+) -> List[str]:
+    tips = [
+        "每天至少安排 4 个游玩点，并尽量避免重复地点。",
+        "多日路线按片区分天，实际出行时可根据天气和体力微调顺序。",
+    ]
+    compact_rag = _compact_rag_context(rag_context)
+    rag_titles = [
+        chunk.get("title", "")
+        for chunk in compact_rag.get("chunks", [])
+        if chunk.get("title")
+    ]
+    if rag_titles:
+        tips.append(f"已参考本地攻略知识：{'、'.join(rag_titles[:2])}。")
+    if _prefers_afternoon_start(parsed_request):
+        tips.append("你偏好下午出门，行程已避免上午过早开始。")
+    return tips
+
+
+def _build_fast_itinerary(
+    parsed_request: Dict[str, Any],
+    tool_results: Dict[str, Any],
+    rag_context: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    city = (parsed_request.get("city", "") or "目的地").strip()
+    expected_days = max(int(parsed_request.get("days", 0) or 0), 1)
+    pools = _extract_poi_pool(tool_results)
+    day_district_plan = _build_day_district_plan(parsed_request, tool_results)
+    district_map = {
+        plan.get("day"): plan.get("district", "").strip()
+        for plan in day_district_plan
+    }
+    used_names: set[str] = set()
+    days = []
+
+    for day_number in range(1, expected_days + 1):
+        preferred_district = district_map.get(day_number, "")
+        template = _day_time_template(MIN_SIGHTSEEING_ITEMS_PER_DAY, parsed_request)
+        template = template or FULL_DAY_TIME_TEMPLATES[MIN_SIGHTSEEING_ITEMS_PER_DAY]
+        categories = ["景点", "景点", "景点", "夜景"]
+        items = []
+
+        for item_index, (time_range, category) in enumerate(zip(template, categories), start=1):
+            item = _build_replacement_item(
+                item={
+                    "time": time_range,
+                    "name": "",
+                    "category": category,
+                    "description": "",
+                    "transport_to_next": (
+                        "前往下一站约 15-20 分钟"
+                        if item_index < MIN_SIGHTSEEING_ITEMS_PER_DAY
+                        else ""
+                    ),
+                },
+                day_number=day_number,
+                item_index=item_index,
+                pools=pools,
+                used_names=used_names,
+                preferred_district=preferred_district or None,
+            )
+            item["time"] = time_range
+            item["category"] = category
+            normalized = _normalize_name(item.get("name", ""))
+            if normalized:
+                used_names.add(normalized)
+            items.append(item)
+
+        district_label = preferred_district or city
+        theme_suffix = _fast_theme_suffix(day_number, parsed_request)
+        days.append(
+            {
+                "day": day_number,
+                "theme": f"{district_label}·{theme_suffix}",
+                "route_summary": f"以{district_label}为中心串联 4 个游玩点，保证从早到晚且不重复景点。",
+                "items": items,
+                "day_tips": _fast_day_tip(day_number, district_label, parsed_request),
+            }
+        )
+
+    itinerary = {
+        "title": f"{city}{expected_days}日游",
+        "summary": f"这是一份围绕{city}不同片区展开的 {expected_days} 天快速结构化行程。",
+        "important_tips": _fast_important_tips(parsed_request, rag_context),
+        "days": days,
+    }
+    return postprocess_itinerary(itinerary, parsed_request, tool_results)
+
+
 def generate_itinerary_with_llm(
     parsed_request: Dict[str, Any],
     execution_plan: Dict[str, Any],
     tool_results: Dict[str, Any],
     rag_context: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
+    if FAST_ITINERARY_ENABLED:
+        return _build_fast_itinerary(parsed_request, tool_results, rag_context)
+
     day_district_plan = _build_day_district_plan(parsed_request, tool_results)
     compact_tool_results = _build_compact_tool_context(parsed_request, tool_results)
     candidate_pool = {
@@ -1266,7 +1458,7 @@ def generate_itinerary_with_llm(
         "candidate_pool": candidate_pool,
         "candidate_pool_by_district": compact_tool_results.get("candidate_pool_by_district", {}),
         "day_district_plan": day_district_plan,
-        "rag_context": rag_context or {},
+        "rag_context": _compact_rag_context(rag_context),
     }
 
     model_name = get_model_name()

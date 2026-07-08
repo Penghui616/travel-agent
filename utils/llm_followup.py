@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 
+from utils.context_compactor import compact_history, compact_itinerary, compact_tool_results
 from utils.config import get_setting
 from utils.langchain_llm import LangChainChatClient, get_langchain_chat_client
 from utils.token_usage import record_token_usage
@@ -17,7 +18,7 @@ UPDATE_PROMPT = """
 
 你的任务是根据：
 1. 当前已经解析好的旅游需求 JSON
-2. 当前已有的行程 JSON（可能为空）
+2. 当前已有的行程摘要 JSON（可能为空）
 3. 最近的对话历史
 4. 用户刚刚提出的新要求
 
@@ -51,8 +52,8 @@ QA_PROMPT = """
 你会收到：
 1. 当前解析后的旅行需求
 2. 当前执行计划
-3. 当前工具结果
-4. 当前最终行程
+3. 当前工具结果摘要
+4. 当前最终行程摘要
 5. 最近对话历史
 6. 用户最新问题
 
@@ -184,15 +185,6 @@ def should_update_trip(user_message: str) -> bool:
             r"第[一二两三四五六七八九十\d]+天",
         ]
     )
-
-
-def _trim_history(
-    conversation_history: List[Dict[str, str]],
-    limit: int = 8,
-) -> List[Dict[str, str]]:
-    if len(conversation_history) <= limit:
-        return conversation_history
-    return conversation_history[-limit:]
 
 
 def _chinese_number_to_int(text: str) -> Optional[int]:
@@ -496,8 +488,8 @@ def update_parsed_request_with_llm(
     if get_setting("ZHIPU_API_KEY"):
         payload = {
             "current_request": current_request,
-            "current_itinerary": current_itinerary or {},
-            "conversation_history": _trim_history(conversation_history),
+            "current_itinerary": compact_itinerary(current_itinerary),
+            "conversation_history": compact_history(conversation_history),
             "user_message": effective_user_message,
         }
 
@@ -540,9 +532,9 @@ def answer_followup_with_llm(
     payload = {
         "parsed_request": parsed_request,
         "execution_plan": execution_plan,
-        "tool_results": tool_results,
-        "final_itinerary": final_itinerary,
-        "conversation_history": _trim_history(conversation_history),
+        "tool_results": compact_tool_results(tool_results),
+        "final_itinerary": compact_itinerary(final_itinerary),
+        "conversation_history": compact_history(conversation_history),
         "user_message": effective_user_message,
     }
 

@@ -16,6 +16,12 @@ from utils.token_usage import (
     reset_token_usage,
     summarize_token_usage,
 )
+from utils.user_memory import (
+    load_user_memory,
+    memory_to_display,
+    reset_user_memory,
+    update_user_memory_from_interaction,
+)
 
 
 TIMING_STAGE_LABELS = {
@@ -26,7 +32,7 @@ TIMING_STAGE_LABELS = {
     "deterministic_plan": "本地任务计划",
     "tools": "工具调用",
     "rag_retrieval": "RAG 知识检索",
-    "itinerary_llm": "行程生成 LLM",
+    "itinerary_llm": "行程生成（快速/LLM）",
     "followup_answer": "追问回答 LLM",
 }
 
@@ -85,6 +91,7 @@ def init_session_state() -> None:
         "timing_history": [],
         "last_token_usage": None,
         "token_usage_history": [],
+        "user_memory": load_user_memory(),
         "conversation_history": [
             {"role": "assistant", "content": DEFAULT_ASSISTANT_MESSAGE}
         ],
@@ -387,6 +394,10 @@ def run_trip_pipeline(user_message: str, is_update: bool) -> None:
         st.session_state["execution_plan"] = execution_plan
         st.session_state["tool_results"] = tool_results
         st.session_state["final_itinerary"] = final_itinerary
+        st.session_state["user_memory"] = update_user_memory_from_interaction(
+            user_message,
+            parsed_request,
+        )
         st.session_state["last_warnings"] = []
 
         assistant_message = build_assistant_summary(
@@ -464,8 +475,12 @@ st.caption(
     "支持多轮对话：先做 Query Rewriting，再结合工具结果生成旅行方案。"
 )
 
-_, top_col2 = st.columns([5, 1])
+_, top_col2, top_col3 = st.columns([4, 1, 1])
 with top_col2:
+    if st.button("清空记忆", use_container_width=True):
+        st.session_state["user_memory"] = reset_user_memory()
+        st.rerun()
+with top_col3:
     if st.button("清空对话", use_container_width=True):
         reset_conversation()
         st.rerun()
@@ -562,6 +577,10 @@ with st.expander("Token 消耗统计", expanded=False):
             st.info("这次流程没有产生新的 LLM token 消耗，可能是命中了缓存或没有调用模型。")
     else:
         st.info("当前还没有 Token 消耗统计。")
+
+with st.expander("长期记忆", expanded=False):
+    st.caption("长期记忆会自动保存用户偏好，并在新行程中作为软约束注入。")
+    st.json(memory_to_display(st.session_state.get("user_memory")))
 
 with st.expander("解析后的旅行需求", expanded=False):
     if st.session_state["parsed_request"] is not None:

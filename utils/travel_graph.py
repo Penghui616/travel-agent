@@ -12,12 +12,13 @@ except ImportError:
     StateGraph = None
 
 
-MAX_TOOL_WORKERS = max(2, int(get_setting("TRAVEL_AGENT_MAX_TOOL_WORKERS", "4")))
+MAX_TOOL_WORKERS = max(1, int(get_setting("TRAVEL_AGENT_MAX_TOOL_WORKERS", "2") or "2"))
 ENABLE_DISTANCE_TOOL = get_setting("TRAVEL_AGENT_ENABLE_DISTANCE", "1").lower() not in {
     "0",
     "false",
     "no",
 }
+MIN_ATTRACTION_CANDIDATES = max(20, int(get_setting("TRAVEL_AGENT_MIN_ATTRACTION_CANDIDATES", "20") or "20"))
 
 
 class TravelState(TypedDict):
@@ -38,6 +39,15 @@ def _normalize_preferences(parsed_request: Dict[str, Any]) -> Tuple[str, ...]:
     preferences = parsed_request.get("preferences", []) or []
     normalized = sorted({str(item).strip() for item in preferences if str(item).strip()})
     return tuple(normalized)
+
+
+def _normalize_days(parsed_request: Optional[Dict[str, Any]]) -> int:
+    if not isinstance(parsed_request, dict):
+        return 0
+    try:
+        return max(int(parsed_request.get("days", 0) or 0), 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _tool_signatures(parsed_request: Dict[str, Any]) -> Dict[str, Tuple[Any, ...]]:
@@ -66,6 +76,38 @@ def _clone_result(data: Any) -> Any:
     return data
 
 
+def _is_empty_limited_result(tool_name: str, result: Dict[str, Any]) -> bool:
+    if not isinstance(result, dict) or not result.get("warning"):
+        return False
+    list_key_map = {
+        "weather": "weather",
+        "attractions": "attractions",
+        "restaurants": "restaurants",
+        "hotels": "hotels",
+    }
+    list_key = list_key_map.get(tool_name)
+    return bool(list_key and not result.get(list_key))
+
+
+def _reuse_previous_on_limited_result(
+    tool_name: str,
+    result: Dict[str, Any],
+    previous_tool_results: Optional[Dict[str, Any]],
+) -> Dict[str, Any]:
+    if not _is_empty_limited_result(tool_name, result):
+        return result
+
+    previous_result = (previous_tool_results or {}).get(tool_name)
+    if not previous_result:
+        return result
+
+    reused = _clone_result(previous_result)
+    warnings = reused.get("warnings", []) if isinstance(reused.get("warnings"), list) else []
+    warnings.append(f"本次{tool_name}工具触发高德限流，已复用上一次结果。")
+    reused["warnings"] = warnings
+    return reused
+
+
 def _should_refresh_tool(
     tool_name: str,
     parsed_request: Dict[str, Any],
@@ -79,6 +121,19 @@ def _should_refresh_tool(
     current_signatures = _tool_signatures(parsed_request)
     if previous_signatures.get(tool_name) != current_signatures.get(tool_name):
         return True
+
+    current_days = _normalize_days(parsed_request)
+    previous_days = _normalize_days(previous_request)
+    if tool_name == "attractions":
+        attractions = previous_tool_results.get("attractions", {}).get("attractions", []) or []
+        required_candidates = max(MIN_ATTRACTION_CANDIDATES, current_days * 4 + max(current_days, 4))
+        if current_days > previous_days or len(attractions) < required_candidates:
+            return True
+
+    if tool_name == "restaurants":
+        restaurants = previous_tool_results.get("restaurants", {}).get("restaurants", []) or []
+        if current_days > previous_days and len(restaurants) < max(8, current_days * 2):
+            return True
 
     return not previous_tool_results.get(tool_name)
 
@@ -231,6 +286,11 @@ def run_travel_agent_tools(
         for future in as_completed(future_map):
             tool_name = future_map[future]
             result = future.result()
+            result = _reuse_previous_on_limited_result(
+                tool_name,
+                result,
+                previous_tool_results,
+            )
             if tool_name == "weather":
                 weather_result = result
             elif tool_name == "attractions":

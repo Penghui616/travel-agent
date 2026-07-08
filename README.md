@@ -11,6 +11,7 @@
 - LangChain 工具层：高德能力封装为 LangChain tools。
 - LangGraph 工作流：用状态图编排首次生成、行程修改和普通追问。
 - RAG 知识检索：从本地旅行攻略知识库中检索相关片段，补充路线节奏和避坑建议。
+- 长期记忆：自动记录用户偏好、避雷点、出门时间、交通方式等，后续新行程自动作为软约束注入。
 - 进度反馈：Streamlit 页面展示当前执行阶段。
 - 耗时与 token 统计：记录每次流程的阶段耗时和模型 token 消耗。
 
@@ -44,6 +45,8 @@ travel_agent/
 │   ├── llm_followup.py            # 多轮修改与追问
 │   ├── llm_itinerary.py           # 行程生成与后处理
 │   ├── llm_planner.py             # 本地任务规划
+│   ├── context_compactor.py       # 多轮对话上下文压缩
+│   ├── user_memory.py             # 长期用户偏好记忆
 │   ├── token_usage.py             # token 统计
 │   └── config.py                  # 本地 .env / Streamlit Secrets 配置读取
 └── test_amap.py                   # 高德工具测试脚本
@@ -95,8 +98,19 @@ python -m pip install -r requirements.txt
 ZHIPU_API_KEY=你的智谱APIKey
 ZHIPU_MODEL=glm-4-flash
 ZHIPU_EMBEDDING_MODEL=embedding-3
+ZHIPU_TIMEOUT_SECONDS=120
+ZHIPU_MAX_RETRIES=1
+ZHIPU_PREFER_OFFICIAL_SDK=1
 AMAP_KEY=你的高德APIKey
 TRAVEL_AGENT_ENABLE_DISTANCE=0
+TRAVEL_AGENT_FAST_ITINERARY=1
+TRAVEL_AGENT_ATTRACTION_POI_LIMIT=40
+TRAVEL_AGENT_MAX_TOOL_WORKERS=2
+TRAVEL_AGENT_MAX_POI_SEARCH_WORKERS=1
+TRAVEL_AGENT_AMAP_MIN_REQUEST_INTERVAL=0.35
+TRAVEL_AGENT_FOLLOWUP_HISTORY_LIMIT=4
+TRAVEL_AGENT_CONTEXT_ITEMS_PER_DAY=5
+TRAVEL_AGENT_ENABLE_MEMORY=1
 ```
 
 3. 启动应用：
@@ -119,8 +133,19 @@ http://localhost:8501
 ZHIPU_API_KEY = "你的智谱APIKey"
 ZHIPU_MODEL = "glm-4-flash"
 ZHIPU_EMBEDDING_MODEL = "embedding-3"
+ZHIPU_TIMEOUT_SECONDS = "120"
+ZHIPU_MAX_RETRIES = "1"
+ZHIPU_PREFER_OFFICIAL_SDK = "1"
 AMAP_KEY = "你的高德APIKey"
 TRAVEL_AGENT_ENABLE_DISTANCE = "0"
+TRAVEL_AGENT_FAST_ITINERARY = "1"
+TRAVEL_AGENT_ATTRACTION_POI_LIMIT = "40"
+TRAVEL_AGENT_MAX_TOOL_WORKERS = "2"
+TRAVEL_AGENT_MAX_POI_SEARCH_WORKERS = "1"
+TRAVEL_AGENT_AMAP_MIN_REQUEST_INTERVAL = "0.35"
+TRAVEL_AGENT_FOLLOWUP_HISTORY_LIMIT = "4"
+TRAVEL_AGENT_CONTEXT_ITEMS_PER_DAY = "5"
+TRAVEL_AGENT_ENABLE_MEMORY = "1"
 ```
 
 部署时入口文件填写：
@@ -151,10 +176,20 @@ app.py
 
 > 我在项目中加入了本地 RAG 知识库，使用 Markdown 存储城市攻略和通用旅行规划经验，按标题切分文档后调用智谱 Embedding 生成语义向量，并写入 Chroma 本地向量数据库。行程生成前，LangGraph 会先执行 RAG 检索召回相关片段，再把 `rag_context` 注入行程生成节点。
 
+如果强调上下文工程，可以这样介绍：
+
+> 我在多轮对话里做了 Context Compression 和 Long-term Memory。短期上下文只传压缩后的行程摘要、工具摘要和最近几条对话；长期记忆会把用户偏好的出门时间、交通方式、喜欢/避开的内容持久化到本地 JSON，并在下一次需求解析后作为软约束注入 LangGraph 状态，避免每轮都把完整历史塞进模型。
+
 ## 注意事项
 
 - 不要把 `.env` 或真实 API Key 提交到 GitHub。
 - 如果 Streamlit Cloud 报密钥缺失，优先检查 Secrets 是否为合法 TOML 格式。
 - 高德路线距离查询会增加耗时，可以通过 `TRAVEL_AGENT_ENABLE_DISTANCE=0` 关闭。
+- 如果高德报 `CUQPS_HAS_EXCEEDED_THE_LIMIT`，说明请求太密；项目默认已做全局限速和工具降级，可适当增大 `TRAVEL_AGENT_AMAP_MIN_REQUEST_INTERVAL`。
+- 默认启用 `TRAVEL_AGENT_FAST_ITINERARY=1`，最终行程用本地结构化生成器从真实 POI 组装，避免 5-7 天大 JSON 生成拖到几分钟。
+- 多轮追问默认只传压缩后的行程摘要、工具摘要和最近 4 条对话，降低输入 token；可通过 `TRAVEL_AGENT_FOLLOWUP_HISTORY_LIMIT` 和 `TRAVEL_AGENT_CONTEXT_ITEMS_PER_DAY` 调整。
+- 长期记忆默认保存在本地 `data/user_memory.json`，该文件已加入 `.gitignore`，不会提交到 GitHub。
+- 默认优先使用智谱官方 SDK 调用模型，减少 LangChain 包装层偶发读超时；如需强制测试 LangChain ChatModel，可设置 `ZHIPU_PREFER_OFFICIAL_SDK=0`。
 - 模型输出 JSON 偶尔可能格式不稳定，项目中已做基础 JSON 修复与行程后处理。
 - RAG 知识库默认使用 Chroma 本地向量数据库；如果 embedding 或 Chroma 不可用，会自动退回 TF-IDF 检索，保证应用仍可运行。
+- 如果云端偶发 `read operation timed out`，可以适当增大 `ZHIPU_TIMEOUT_SECONDS`，或者降低 `TRAVEL_AGENT_MAX_CONTEXT_ATTRACTIONS_CAP`、`TRAVEL_AGENT_MAX_RAG_CHUNKS` 等上下文上限。

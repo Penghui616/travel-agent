@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional
 
 from dotenv import load_dotenv
 
+from utils.context_compactor import compact_history, compact_itinerary
 from utils.config import get_setting
 from utils.langchain_llm import LangChainChatClient, get_langchain_chat_client
 from utils.token_usage import record_token_usage
@@ -78,8 +79,8 @@ def rewrite_followup_query(
     fallback = user_message.strip()
     payload = {
         "parsed_request": parsed_request or {},
-        "current_itinerary": current_itinerary or {},
-        "conversation_history": (conversation_history or [])[-8:],
+        "current_itinerary": compact_itinerary(current_itinerary),
+        "conversation_history": compact_history(conversation_history),
         "user_message": fallback,
     }
     return _rewrite_with_llm(FOLLOWUP_REWRITE_PROMPT, payload, fallback)

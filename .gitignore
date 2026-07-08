@@ -12,6 +12,7 @@ env/
 
 # Local RAG vector indexes
 data/vector_store/
+data/user_memory.json
 
 # OS/editor noise
 .DS_Store
