@@ -122,7 +122,7 @@ streamlit run app.py
 4. 浏览器打开：
 
 ```text
-http://localhost:8501
+(https://travel-agent-penghui.streamlit.app/)
 ```
 
 ## Streamlit Cloud 部署
@@ -166,19 +166,7 @@ app.py
 这个行程适合带老人吗
 ```
 
-## 面试介绍
 
-这个项目可以这样介绍：
-
-> 我做了一个基于 LangChain 和 LangGraph 的旅行规划 Agent。LangChain 负责封装智谱大模型调用和高德地图工具，LangGraph 负责编排 Query Rewriting、需求解析、工具调用、行程生成、多轮修改和普通追问等节点。前端使用 Streamlit，支持实时进度展示、token 统计和多轮上下文对话。
-
-如果强调 RAG 版本，可以这样介绍：
-
-> 我在项目中加入了本地 RAG 知识库，使用 Markdown 存储城市攻略和通用旅行规划经验，按标题切分文档后调用智谱 Embedding 生成语义向量，并写入 Chroma 本地向量数据库。行程生成前，LangGraph 会先执行 RAG 检索召回相关片段，再把 `rag_context` 注入行程生成节点。
-
-如果强调上下文工程，可以这样介绍：
-
-> 我在多轮对话里做了 Context Compression 和 Long-term Memory。短期上下文只传压缩后的行程摘要、工具摘要和最近几条对话；长期记忆会把用户偏好的出门时间、交通方式、喜欢/避开的内容持久化到本地 JSON，并在下一次需求解析后作为软约束注入 LangGraph 状态，避免每轮都把完整历史塞进模型。
 
 ## 注意事项
 
