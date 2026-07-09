@@ -122,7 +122,7 @@ streamlit run app.py
 4. 浏览器打开：
 
 ```text
-(https://travel-agent-penghui.streamlit.app/)
+https://travel-agent-penghui.streamlit.app/
 ```
 
 ## Streamlit Cloud 部署
